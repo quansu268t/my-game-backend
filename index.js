@@ -75,7 +75,14 @@ const USER_RPC_MAP = {
     startGame: "rpc_start_game", redeemGiftCode: "redeem_gift_code", claimReferralReward: "rpc_claim_referral_reward",
     summonOne: "rpc_summon_one", summonFive: "rpc_summon_five", exchangePoints: "exchange_points",
     withdrawCreate: "rpc_withdraw_create", switchPet: "rpc_switch_pet", findOpponent: "rpc_find_opponent",
-    claimTelegramTask: "rpc_claim_telegram_task"
+    claimTelegramTask: "rpc_claim_telegram_task",
+    getTopBar: "rpc_get_topbar",
+    getActivePet: "rpc_get_active_pet_page",
+    getMyPets: "rpc_get_my_pets",
+    getBattlePage: "rpc_get_battle_page",
+    getBattleHistory: "rpc_get_battle_history",
+    getWithdrawPage: "rpc_get_withdraw_page",
+    getReferralPage: "rpc_get_referral_page"
 };
 
 const ADMIN_RPC_MAP = {

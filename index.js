@@ -114,7 +114,8 @@ const USER_RPC_MAP = {
     getBattlePage: "rpc_get_battle_page",
     getBattleHistory: "rpc_get_battle_history",
     getWithdrawPage: "rpc_get_withdraw_page",
-    getReferralPage: "rpc_get_referral_page"
+    getReferralPage: "rpc_get_referral_page",
+    WatchPet: "rpc_get_active_pet"
 };
 
 const ADMIN_RPC_MAP = {

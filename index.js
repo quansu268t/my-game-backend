@@ -16,7 +16,8 @@ const app = express();
 const allowedOrigins = [
     "https://my-game-backend-o7ij.onrender.com",
     "https://web.telegram.org",
-    "https://t.me" // Thêm domain frontend của bạn vào đây nếu có (ví dụ GitHub Pages)
+    "https://t.me",
+    "https://my-telegram-game-jet.vercel.app"
 ];
 
 app.use(cors({

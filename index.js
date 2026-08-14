@@ -151,7 +151,7 @@ app.post("/api/login", async (req, res) => {
     const { data: banned } = await supabase.from("banned_users").select("telegram_id").eq("telegram_id", user.id).maybeSingle();
     if (banned) return res.status(403).json({ error: "BANNED" });
 
-    const token = jwt.sign({ telegram_id: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: "1h" });
+    const token = jwt.sign({ telegram_id: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: "30m" });
     return res.json({ ok: true, token, telegram_id: user.id, username: user.username, first_name: user.first_name });
 });
 

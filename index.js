@@ -4,13 +4,44 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
 const { Redis } = require("@upstash/redis");
-
+const rateLimit = require("express-rate-limit");
 const app = express();
-app.use(cors());
-app.use(express.json());
+
 
 // ==========================================
-// 1. KHỞI TẠO DỊCH VỤ (SUPABASE & REDIS)
+// 1. CẤU HÌNH BẢO MẬT (CORS & RATE LIMIT)
+// ==========================================
+
+// Khóa CORS
+const allowedOrigins = [
+    "https://my-game-backend-o7ij.onrender.com",
+    "https://web.telegram.org",
+    "https://t.me" // Thêm domain frontend của bạn vào đây nếu có (ví dụ GitHub Pages)
+];
+
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin || allowedOrigins.some(domain => origin.startsWith(domain))) {
+            callback(null, true);
+        } else {
+            callback(new Error("CORS Policy: Không có quyền truy cập!"));
+        }
+    }
+}));
+
+app.use(express.json());
+
+// Chống Spam API (Rate Limiting) - Chỉ áp dụng cho các route /api/
+const apiLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 phút
+    max: 25, // Tối đa 25 request/phút cho 1 IP
+    message: { ok: false, error: "Bạn gửi quá nhiều yêu cầu, hãy thử lại sau ít phút!" }
+});
+
+app.use("/api/", apiLimiter);
+
+// ==========================================
+// 2. KHỞI TẠO DỊCH VỤ (SUPABASE & REDIS)
 // ==========================================
 const supabase = createClient(
     process.env.SUPABASE_URL,
@@ -23,7 +54,7 @@ const redis = new Redis({
 });
 
 // ==========================================
-// 2. CÁC HÀM TIỆN ÍCH (UTILS)
+// 3. CÁC HÀM TIỆN ÍCH (UTILS)
 // ==========================================
 function verifyTelegramInitData(initData, botToken) {
     const params = new URLSearchParams(initData);
@@ -67,7 +98,7 @@ async function getCachedRpc(cacheKey, rpcName, rpcParams = {}, ttlSeconds = 30) 
 }
 
 // ==========================================
-// 3. DANH SÁCH CONFIG RPC
+// 4. DANH SÁCH CONFIG RPC
 // ==========================================
 const USER_RPC_MAP = {
     claimAd: "rpc_claim_ad_task", upgradePetStat: "rpc_upgrade_pet_stat", feedPet: "rpc_feed_pet",
@@ -102,7 +133,7 @@ const RPC_CONFIG = {
 };
 
 // ==========================================
-// 4. ĐỊNH TUYẾN CÁC API (ROUTES)
+// 5. ĐỊNH TUYẾN CÁC API (ROUTES)
 // ==========================================
 
 // Ping

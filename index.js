@@ -268,7 +268,40 @@ app.post("/api/checkTelegramTask", async (req, res) => {
     const status = result.result.status;
     return res.json({ joined: status === "member" || status === "administrator" || status === "creator", status });
 });
+// ==========================================
+// API POSTBACK TỪ MONETAG (SERVER-TO-SERVER)
+// ==========================================
+app.get("/api/monetag-postback", async (req, res) => {
+    try {
+        // Lấy telegram_id từ tham số query trên URL (?telegram_id=...)
+        const telegramId = req.query.telegram_id;
 
+        if (!telegramId) {
+            return res.status(400).send("Missing telegram_id");
+        }
+
+        console.log(`[Monetag Postback] Nhận xác nhận xem quảng cáo cho Telegram ID: ${telegramId}`);
+
+        // Gọi hàm RPC trực tiếp trên Supabase để cộng thưởng cho User
+        // LƯU Ý: Hãy chắc chắn bạn đã có hàm rpc_claim_ad_task trên Supabase hỗ trợ truyền p_telegram_id
+        const { data, error } = await supabase.rpc("rpc_claim_ad_task", {
+            p_telegram_id: Number(telegramId),
+            p_task_type: "food" // Hoặc loại task tương ứng
+        });
+
+        if (error) {
+            console.error("[Monetag Postback Error]:", error.message);
+            return res.status(500).send("Database error");
+        }
+
+        // Báo lại cho Monetag biết là Server bạn đã nhận thông tin thành công
+        return res.status(200).send("OK");
+
+    } catch (err) {
+        console.error("[Monetag Postback Exception]:", err.message);
+        return res.status(500).send("Internal Server Error");
+    }
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server chạy mượt mà tại cổng ${PORT}`));
         

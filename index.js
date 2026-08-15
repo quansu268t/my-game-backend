@@ -269,53 +269,332 @@ app.post("/api/checkTelegramTask", async (req, res) => {
     return res.json({ joined: status === "member" || status === "administrator" || status === "creator", status });
 });
 // ==========================================
-// API POSTBACK TỪ MONETAG (SERVER-TO-SERVER)
+// MONETAG POSTBACK
+// SERVER-TO-SERVER
 // ==========================================
+
 app.get("/api/monetag-postback", async (req, res) => {
     try {
-        const telegramId = req.query.telegram_id;
-        const taskType = req.query.task_type || req.query.request_var || "food";
-        const estimatedPrice = parseFloat(req.query.price || "0"); // Đổi sang số thực
 
-        if (!telegramId) return res.status(400).send("Missing telegram_id");
+        const {
+            ymid,
+            task_type,
+            price,
+            zone,
+            event,
+            reward
+        } = req.query;
 
-        // 1. Gọi Supabase RPC cộng đồ/xu cho User
-        const { data, error } = await supabase.rpc("rpc_claim_ad_task", {
-            p_telegram_id: Number(telegramId),
-            p_task_type: taskType
-        });
 
-        if (error) {
-            console.error("[Postback DB Error]:", error.message);
+        // ==========================================
+        // 1. KIỂM TRA CÁC THAM SỐ BẮT BUỘC
+        // ==========================================
+
+        if (!ymid) {
+            console.warn("[Monetag] Missing ymid");
+            return res.status(400).send("Missing ymid");
+        }
+
+        if (!task_type) {
+            console.warn("[Monetag] Missing task_type");
+            return res.status(400).send("Missing task_type");
+        }
+
+
+        // ==========================================
+        // 2. CHỈ CHO PHÉP 4 LOẠI NHIỆM VỤ
+        // ==========================================
+
+        const allowedTasks = [
+            "food",
+            "power",
+            "battle",
+            "coin"
+        ];
+
+        if (!allowedTasks.includes(String(task_type))) {
+
+            console.warn(
+                "[Monetag] Invalid task:",
+                task_type
+            );
+
+            return res.status(400).send("Invalid task_type");
+        }
+
+
+        // ==========================================
+        // 3. KIỂM TRA YMID
+        //
+        // Format:
+        // telegramId_timestamp_random
+        // ==========================================
+
+        const ymidString = String(ymid);
+
+        const match = ymidString.match(/^(\d+)_(\d+)_([a-z0-9]+)$/);
+
+        if (!match) {
+
+            console.warn(
+                "[Monetag] Invalid ymid:",
+                ymidString
+            );
+
+            return res.status(400).send("Invalid ymid");
+        }
+
+        const telegramId = Number(match[1]);
+
+
+        if (!Number.isSafeInteger(telegramId)) {
+
+            console.warn(
+                "[Monetag] Invalid telegram ID:",
+                telegramId
+            );
+
+            return res.status(400).send("Invalid telegram_id");
+        }
+
+
+        // ==========================================
+        // 4. CHỈ NHẬN EVENT HỢP LỆ
+        // ==========================================
+
+        const eventType = String(event || "");
+
+        if (
+            eventType !== "impression" &&
+            eventType !== "click"
+        ) {
+
+            console.warn(
+                "[Monetag] Invalid event:",
+                eventType
+            );
+
+            return res.status(400).send("Invalid event");
+        }
+
+
+        // ==========================================
+        // 5. CHỈ CỘNG KHI MONETAG XÁC NHẬN VALUED
+        // ==========================================
+
+        const rewardType = String(reward || "");
+
+        if (rewardType !== "valued") {
+
+            console.log(
+                `[Monetag] Non-valued event | ID=${telegramId} | Task=${task_type} | Reward=${rewardType}`
+            );
+
+            // Không cộng thưởng.
+            // Vẫn trả 200 để Monetag không retry vô ích.
+            return res.status(200).send("IGNORED");
+        }
+
+
+        // ==========================================
+        // 6. KIỂM TRA PRICE
+        // ==========================================
+
+        const estimatedPrice = Number.parseFloat(price || "0");
+
+        if (
+            !Number.isFinite(estimatedPrice) ||
+            estimatedPrice < 0
+        ) {
+
+            console.warn(
+                "[Monetag] Invalid price:",
+                price
+            );
+
+            return res.status(400).send("Invalid price");
+        }
+
+
+        // ==========================================
+        // 7. KIỂM TRA ZONE
+        // ==========================================
+
+        const zoneId = String(zone || "");
+
+        // Đổi số này thành MAIN ZONE ID của bạn
+        const EXPECTED_ZONE_ID = "11154093";
+
+        if (zoneId && zoneId !== EXPECTED_ZONE_ID) {
+
+            console.warn(
+                `[Monetag] Wrong zone: ${zoneId}`
+            );
+
+            return res.status(400).send("Invalid zone");
+        }
+
+
+        // ==========================================
+        // 8. CHỐNG POSTBACK TRÙNG
+        // ==========================================
+
+        const { data: existingPostback, error: checkError } =
+            await supabase
+                .from("monetag_postbacks")
+                .select("ymid")
+                .eq("ymid", ymidString)
+                .maybeSingle();
+
+
+        if (checkError) {
+
+            console.error(
+                "[Monetag] Duplicate check error:",
+                checkError.message
+            );
+
             return res.status(500).send("Database error");
         }
 
-        // 2. GHI LOG CỘNG DỒN TÀI KHOẢN (1 người luôn chỉ có 1 dòng)
-        // Lấy dữ liệu cũ của user ra
-        const { data: existingUser } = await supabase
+
+        if (existingPostback) {
+
+            console.log(
+                `[Monetag] Duplicate ignored | ymid=${ymidString}`
+            );
+
+            return res.status(200).send("DUPLICATE");
+        }
+
+
+        // ==========================================
+        // 9. GHI POSTBACK TRƯỚC KHI CỘNG THƯỞNG
+        // ==========================================
+
+        const { error: insertError } =
+            await supabase
+                .from("monetag_postbacks")
+                .insert({
+                    ymid: ymidString,
+                    telegram_id: telegramId,
+                    task_type: String(task_type),
+                    event_type: eventType,
+                    reward_event_type: rewardType,
+                    estimated_price: estimatedPrice,
+                    zone_id: zoneId || null
+                });
+
+
+        if (insertError) {
+
+            // Nếu lỗi do unique ymid thì coi như duplicate
+            if (
+                insertError.code === "23505"
+            ) {
+
+                console.log(
+                    `[Monetag] Duplicate ignored | ymid=${ymidString}`
+                );
+
+                return res.status(200).send("DUPLICATE");
+            }
+
+
+            console.error(
+                "[Monetag] Postback insert error:",
+                insertError.message
+            );
+
+            return res.status(500).send("Database error");
+        }
+
+
+        // ==========================================
+        // 10. CỘNG THƯỞNG
+        // ==========================================
+
+        const { data, error } =
+            await supabase.rpc(
+                "rpc_claim_ad_task",
+                {
+                    p_telegram_id: telegramId,
+                    p_task_type: String(task_type)
+                }
+            );
+
+
+        if (error) {
+
+            console.error(
+                "[Monetag] Reward RPC error:",
+                error.message
+            );
+
+            return res.status(500).send("Reward error");
+        }
+
+
+        // ==========================================
+        // 11. GHI DOANH THU
+        // ==========================================
+
+        const { data: existingUser } =
+            await supabase
+                .from("user_ad_revenues")
+                .select(
+                    "total_ads_watched, total_earned_usd"
+                )
+                .eq(
+                    "telegram_id",
+                    telegramId
+                )
+                .maybeSingle();
+
+
+        const currentAds =
+            Number(existingUser?.total_ads_watched || 0);
+
+        const currentUsd =
+            Number(existingUser?.total_earned_usd || 0);
+
+
+        await supabase
             .from("user_ad_revenues")
-            .select("total_ads_watched, total_earned_usd")
-            .eq("telegram_id", Number(telegramId))
-            .maybeSingle();
+            .upsert({
+                telegram_id: telegramId,
+                total_ads_watched: currentAds + 1,
+                total_earned_usd: currentUsd + estimatedPrice,
+                last_ad_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            });
 
-        const currentAds = existingUser ? existingUser.total_ads_watched : 0;
-        const currentUsd = existingUser ? existingUser.total_earned_usd : 0;
 
-        // Cập nhật lại (hoặc tạo mới nếu là lần xem QC đầu tiên)
-        await supabase.from("user_ad_revenues").upsert({
-            telegram_id: Number(telegramId),
-            total_ads_watched: currentAds + 1,               // Cộng thêm 1 lượt xem
-            total_earned_usd: currentUsd + estimatedPrice,   // Cộng dồn tiền thu được
-            last_ad_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-        });
+        // ==========================================
+        // 12. LOG
+        // ==========================================
 
-        console.log(`[Postback Success] ID: ${telegramId} | Task: ${taskType} | Price: +$${estimatedPrice}`);
-        
+        console.log(
+            `[Monetag SUCCESS] ` +
+            `ID=${telegramId} | ` +
+            `Task=${task_type} | ` +
+            `Reward=${rewardType} | ` +
+            `Event=${eventType} | ` +
+            `Price=$${estimatedPrice} | ` +
+            `ymid=${ymidString} | ` +
+            `RPC=${data}`
+        );
+
+
         return res.status(200).send("OK");
 
     } catch (err) {
-        console.error("[Postback Exception]:", err.message);
+
+        console.error(
+            "[Monetag Postback Fatal Error]:",
+            err
+        );
+
         return res.status(500).send("Server error");
     }
 });

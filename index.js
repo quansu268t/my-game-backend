@@ -273,49 +273,49 @@ app.post("/api/checkTelegramTask", async (req, res) => {
 // ==========================================
 app.get("/api/monetag-postback", async (req, res) => {
     try {
-        // 1. Lấy tất cả các thông số Monetag truyền về qua URL
         const telegramId = req.query.telegram_id;
-        const taskType = req.query.task_type || "food"; // Đã sửa: Lấy động từ task_type ({request_var})
-        const estimatedPrice = req.query.price || "0";  // Giá tiền ước tính (USD)
-        const zoneId = req.query.zone || null;          // ID vùng quảng cáo
-        const eventType = req.query.event || null;      // Loại sự kiện (impression/click)
+        const taskType = req.query.task_type || "food";
+        const estimatedPrice = parseFloat(req.query.price || "0"); // Đổi sang số thực
 
-        // Kiểm tra xem có Telegram ID không
-        if (!telegramId) {
-            console.error("[Monetag Postback Error]: Thiếu telegram_id");
-            return res.status(400).send("Missing telegram_id");
-        }
+        if (!telegramId) return res.status(400).send("Missing telegram_id");
 
-        console.log(`[Monetag Postback] ID: ${telegramId} | Task: ${taskType} | Giá: $${estimatedPrice} | Event: ${eventType}`);
-
-        // 2. Gọi hàm RPC trên Supabase để cộng thưởng trực tiếp cho User
+        // 1. Gọi Supabase RPC cộng đồ/xu cho User
         const { data, error } = await supabase.rpc("rpc_claim_ad_task", {
             p_telegram_id: Number(telegramId),
             p_task_type: taskType
         });
 
         if (error) {
-            console.error("[Monetag Postback DB Error]:", error.message);
+            console.error("[Postback DB Error]:", error.message);
             return res.status(500).send("Database error");
         }
 
-        // 3. (Tùy chọn) Bạn có thể lưu lại thông tin doanh thu này vào 1 bảng log nếu muốn
-        /*
-        await supabase.from("ad_revenue_logs").insert({
-            telegram_id: Number(telegramId),
-            task_type: taskType,
-            price: parseFloat(estimatedPrice),
-            zone_id: zoneId,
-            event_type: eventType
-        });
-        */
+        // 2. GHI LOG CỘNG DỒN TÀI KHOẢN (1 người luôn chỉ có 1 dòng)
+        // Lấy dữ liệu cũ của user ra
+        const { data: existingUser } = await supabase
+            .from("user_ad_revenues")
+            .select("total_ads_watched, total_earned_usd")
+            .eq("telegram_id", Number(telegramId))
+            .maybeSingle();
 
-        // 4. Báo lại cho Monetag biết là Server bạn đã nhận thông tin thành công
+        const currentAds = existingUser ? existingUser.total_ads_watched : 0;
+        const currentUsd = existingUser ? existingUser.total_earned_usd : 0;
+
+        // Cập nhật lại (hoặc tạo mới nếu là lần xem QC đầu tiên)
+        await supabase.from("user_ad_revenues").upsert({
+            telegram_id: Number(telegramId),
+            total_ads_watched: currentAds + 1,               // Cộng thêm 1 lượt xem
+            total_earned_usd: currentUsd + estimatedPrice,   // Cộng dồn tiền thu được
+            last_ad_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+        });
+
+        console.log(`[Postback Success] ID: ${telegramId} | Price: +$${estimatedPrice}`);
         return res.status(200).send("OK");
 
     } catch (err) {
-        console.error("[Monetag Postback Exception]:", err.message);
-        return res.status(500).send("Internal Server Error");
+        console.error("[Postback Exception]:", err.message);
+        return res.status(500).send("Server error");
     }
 });
 const PORT = process.env.PORT || 3000;

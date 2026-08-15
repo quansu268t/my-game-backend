@@ -302,18 +302,7 @@ app.get("/api/monetag-postback", async (req, res) => {
 
             return res.status(500).send("Server configuration error");
         }
-        console.log("[Monetag] Key received:", !!key);
-        console.log("[Monetag] Secret configured:", !!expectedSecret);
-        console.log(
-         "[Monetag] Key length:",
-         typeof key === "string" ? key.length : 0
-        );
-        console.log(
-          "[Monetag] Secret length:",
-          typeof expectedSecret === "string"
-             ? expectedSecret.length
-             : 0
-        );
+        
         if (
             typeof key !== "string" ||
             key !== expectedSecret

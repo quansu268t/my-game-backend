@@ -310,7 +310,8 @@ app.get("/api/monetag-postback", async (req, res) => {
             updated_at: new Date().toISOString()
         });
 
-        console.log(`[Postback Success] ID: ${telegramId} | Price: +$${estimatedPrice}`);
+        console.log(`[Postback Success] ID: ${telegramId} | Task: ${taskType} | Price: +$${estimatedPrice}`);
+        
         return res.status(200).send("OK");
 
     } catch (err) {

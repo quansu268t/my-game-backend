@@ -267,91 +267,75 @@ app.post("/api/checkTelegramTask", async (req, res) => {
     if (!result.ok) return res.json({ joined: false, telegram: result });
     const status = result.result.status;
     return res.json({ joined: status === "member" || status === "administrator" || status === "creator", status });
-});
+});        
 // ==========================================
 // MONETAG POSTBACK
-// SERVER-TO-SERVER
+// SERVER-TO-SERVER REWARD
 // ==========================================
 
 app.get("/api/monetag-postback", async (req, res) => {
     try {
 
         const {
+            telegram_id,
             ymid,
             task_type,
             price,
             zone,
             event,
-            reward
+            reward,
+            key
         } = req.query;
 
 
         // ==========================================
-        // 1. KIỂM TRA CÁC THAM SỐ BẮT BUỘC
+        // 1. KIỂM TRA SECRET
         // ==========================================
 
-        if (!ymid) {
-            console.warn("[Monetag] Missing ymid");
-            return res.status(400).send("Missing ymid");
-        }
+        const expectedSecret =
+            process.env.MONETAG_POSTBACK_SECRET;
 
-        if (!task_type) {
-            console.warn("[Monetag] Missing task_type");
-            return res.status(400).send("Missing task_type");
-        }
-
-
-        // ==========================================
-        // 2. CHỈ CHO PHÉP 4 LOẠI NHIỆM VỤ
-        // ==========================================
-
-        const allowedTasks = [
-            "food",
-            "power",
-            "battle",
-            "coin"
-        ];
-
-        if (!allowedTasks.includes(String(task_type))) {
-
-            console.warn(
-                "[Monetag] Invalid task:",
-                task_type
+        if (!expectedSecret) {
+            console.error(
+                "[Monetag] MONETAG_POSTBACK_SECRET chưa được cấu hình"
             );
 
-            return res.status(400).send("Invalid task_type");
+            return res.status(500).send("Server configuration error");
         }
 
-
-        // ==========================================
-        // 3. KIỂM TRA YMID
-        //
-        // Format:
-        // telegramId_timestamp_random
-        // ==========================================
-
-        const ymidString = String(ymid);
-
-        const match = ymidString.match(/^(\d+)_(\d+)_([a-z0-9]+)$/);
-
-        if (!match) {
-
+        if (
+            typeof key !== "string" ||
+            key !== expectedSecret
+        ) {
             console.warn(
-                "[Monetag] Invalid ymid:",
-                ymidString
+                "[Monetag] Invalid secret"
             );
 
-            return res.status(400).send("Invalid ymid");
+            return res.status(401).send("Unauthorized");
         }
 
-        const telegramId = Number(match[1]);
 
+        // ==========================================
+        // 2. KIỂM TRA TELEGRAM ID
+        // ==========================================
 
-        if (!Number.isSafeInteger(telegramId)) {
-
+        if (!telegram_id) {
             console.warn(
-                "[Monetag] Invalid telegram ID:",
-                telegramId
+                "[Monetag] Missing telegram_id"
+            );
+
+            return res.status(400).send("Missing telegram_id");
+        }
+
+        const telegramId = Number(telegram_id);
+
+        if (
+            !Number.isSafeInteger(telegramId) ||
+            telegramId <= 0
+        ) {
+            console.warn(
+                "[Monetag] Invalid telegram_id:",
+                telegram_id
             );
 
             return res.status(400).send("Invalid telegram_id");
@@ -359,10 +343,73 @@ app.get("/api/monetag-postback", async (req, res) => {
 
 
         // ==========================================
-        // 4. CHỈ NHẬN EVENT HỢP LỆ
+        // 3. KIỂM TRA YMID
         // ==========================================
 
-        const eventType = String(event || "");
+        if (
+            typeof ymid !== "string" ||
+            !ymid.trim()
+        ) {
+            console.warn(
+                "[Monetag] Missing ymid"
+            );
+
+            return res.status(400).send("Missing ymid");
+        }
+
+        const ymidValue = ymid.trim();
+
+
+        // ==========================================
+        // 4. CHỈ CHO PHÉP 4 LOẠI REWARD
+        // ==========================================
+
+        const allowedTasks = new Set([
+            "food",
+            "power",
+            "battle",
+            "coin"
+        ]);
+
+        const taskType = String(task_type || "").trim();
+
+        if (!allowedTasks.has(taskType)) {
+
+            console.warn(
+                `[Monetag] Invalid task_type: ${taskType}`
+            );
+
+            return res.status(400).send("Invalid task_type");
+        }
+
+
+        // ==========================================
+        // 5. KHÓA MAIN ZONE
+        // ==========================================
+
+        const EXPECTED_ZONE_ID = "11154093";
+
+        const zoneId = String(zone || "").trim();
+
+        if (zoneId !== EXPECTED_ZONE_ID) {
+
+            console.warn(
+                `[Monetag] Invalid zone | ` +
+                `received=${zoneId} | ` +
+                `expected=${EXPECTED_ZONE_ID}`
+            );
+
+            return res.status(403).send("Invalid zone");
+        }
+
+
+        // ==========================================
+        // 6. KIỂM TRA EVENT
+        // Monetag hiện hỗ trợ:
+        // impression / click
+        // ==========================================
+
+        const eventType = String(event || "").trim();
 
         if (
             eventType !== "impression" &&
@@ -370,8 +417,7 @@ app.get("/api/monetag-postback", async (req, res) => {
         ) {
 
             console.warn(
-                "[Monetag] Invalid event:",
-                eventType
+                `[Monetag] Invalid event: ${eventType}`
             );
 
             return res.status(400).send("Invalid event");
@@ -379,28 +425,33 @@ app.get("/api/monetag-postback", async (req, res) => {
 
 
         // ==========================================
-        // 5. CHỈ CỘNG KHI MONETAG XÁC NHẬN VALUED
+        // 7. CHỈ CỘNG THƯỞNG CHO VALUED
         // ==========================================
 
-        const rewardType = String(reward || "");
+        const rewardType = String(reward || "").trim();
 
         if (rewardType !== "valued") {
 
             console.log(
-                `[Monetag] Non-valued event | ID=${telegramId} | Task=${task_type} | Reward=${rewardType}`
+                `[Monetag] Non-valued event | ` +
+                `ID=${telegramId} | ` +
+                `Task=${taskType} | ` +
+                `Reward=${rewardType} | ` +
+                `ymid=${ymidValue}`
             );
 
             // Không cộng thưởng.
-            // Vẫn trả 200 để Monetag không retry vô ích.
+            // Trả 200 để Monetag không retry.
             return res.status(200).send("IGNORED");
         }
 
 
         // ==========================================
-        // 6. KIỂM TRA PRICE
+        // 8. KIỂM TRA PRICE
         // ==========================================
 
-        const estimatedPrice = Number.parseFloat(price || "0");
+        const estimatedPrice =
+            Number.parseFloat(price || "0");
 
         if (
             !Number.isFinite(estimatedPrice) ||
@@ -417,41 +468,24 @@ app.get("/api/monetag-postback", async (req, res) => {
 
 
         // ==========================================
-        // 7. KIỂM TRA ZONE
+        // 9. CHỐNG POSTBACK TRÙNG
         // ==========================================
 
-        const zoneId = String(zone || "");
-
-        // Đổi số này thành MAIN ZONE ID của bạn
-        const EXPECTED_ZONE_ID = "11154093";
-
-        if (zoneId && zoneId !== EXPECTED_ZONE_ID) {
-
-            console.warn(
-                `[Monetag] Wrong zone: ${zoneId}`
-            );
-
-            return res.status(400).send("Invalid zone");
-        }
+        const {
+            data: existingPostback,
+            error: duplicateCheckError
+        } = await supabase
+            .from("monetag_postbacks")
+            .select("id")
+            .eq("ymid", ymidValue)
+            .maybeSingle();
 
 
-        // ==========================================
-        // 8. CHỐNG POSTBACK TRÙNG
-        // ==========================================
-
-        const { data: existingPostback, error: checkError } =
-            await supabase
-                .from("monetag_postbacks")
-                .select("ymid")
-                .eq("ymid", ymidString)
-                .maybeSingle();
-
-
-        if (checkError) {
+        if (duplicateCheckError) {
 
             console.error(
                 "[Monetag] Duplicate check error:",
-                checkError.message
+                duplicateCheckError.message
             );
 
             return res.status(500).send("Database error");
@@ -461,7 +495,8 @@ app.get("/api/monetag-postback", async (req, res) => {
         if (existingPostback) {
 
             console.log(
-                `[Monetag] Duplicate ignored | ymid=${ymidString}`
+                `[Monetag] Duplicate ignored | ` +
+                `ymid=${ymidValue}`
             );
 
             return res.status(200).send("DUPLICATE");
@@ -469,40 +504,39 @@ app.get("/api/monetag-postback", async (req, res) => {
 
 
         // ==========================================
-        // 9. GHI POSTBACK TRƯỚC KHI CỘNG THƯỞNG
+        // 10. GHI POSTBACK
         // ==========================================
 
-        const { error: insertError } =
-            await supabase
-                .from("monetag_postbacks")
-                .insert({
-                    ymid: ymidString,
-                    telegram_id: telegramId,
-                    task_type: String(task_type),
-                    event_type: eventType,
-                    reward_event_type: rewardType,
-                    estimated_price: estimatedPrice,
-                    zone_id: zoneId || null
-                });
+        const {
+            error: insertError
+        } = await supabase
+            .from("monetag_postbacks")
+            .insert({
+                ymid: ymidValue,
+                telegram_id: telegramId,
+                task_type: taskType,
+                event_type: eventType,
+                reward_event_type: rewardType,
+                estimated_price: estimatedPrice,
+                zone_id: zoneId
+            });
 
 
         if (insertError) {
 
-            // Nếu lỗi do unique ymid thì coi như duplicate
-            if (
-                insertError.code === "23505"
-            ) {
+            // UNIQUE violation = request trùng
+            if (insertError.code === "23505") {
 
                 console.log(
-                    `[Monetag] Duplicate ignored | ymid=${ymidString}`
+                    `[Monetag] Duplicate ignored | ` +
+                    `ymid=${ymidValue}`
                 );
 
                 return res.status(200).send("DUPLICATE");
             }
 
-
             console.error(
-                "[Monetag] Postback insert error:",
+                "[Monetag] Insert error:",
                 insertError.message
             );
 
@@ -511,24 +545,26 @@ app.get("/api/monetag-postback", async (req, res) => {
 
 
         // ==========================================
-        // 10. CỘNG THƯỞNG
+        // 11. CỘNG REWARD
         // ==========================================
 
-        const { data, error } =
-            await supabase.rpc(
-                "rpc_claim_ad_task",
-                {
-                    p_telegram_id: telegramId,
-                    p_task_type: String(task_type)
-                }
-            );
+        const {
+            data: rewardResult,
+            error: rewardError
+        } = await supabase.rpc(
+            "rpc_claim_ad_task",
+            {
+                p_telegram_id: telegramId,
+                p_task_type: taskType
+            }
+        );
 
 
-        if (error) {
+        if (rewardError) {
 
             console.error(
                 "[Monetag] Reward RPC error:",
-                error.message
+                rewardError.message
             );
 
             return res.status(500).send("Reward error");
@@ -536,20 +572,35 @@ app.get("/api/monetag-postback", async (req, res) => {
 
 
         // ==========================================
-        // 11. GHI DOANH THU
+        // 12. GHI DOANH THU
         // ==========================================
 
-        const { data: existingUser } =
-            await supabase
-                .from("user_ad_revenues")
-                .select(
-                    "total_ads_watched, total_earned_usd"
-                )
-                .eq(
-                    "telegram_id",
-                    telegramId
-                )
-                .maybeSingle();
+        const {
+            data: existingUser,
+            error: revenueSelectError
+        } = await supabase
+            .from("user_ad_revenues")
+            .select(
+                "total_ads_watched, total_earned_usd"
+            )
+            .eq(
+                "telegram_id",
+                telegramId
+            )
+            .maybeSingle();
+
+
+        if (revenueSelectError) {
+
+            console.error(
+                "[Monetag] Revenue select error:",
+                revenueSelectError.message
+            );
+
+            // Reward đã cộng rồi.
+            // Không trả 500 để tránh Monetag retry
+            // và tạo hậu quả ngoài ý muốn.
+        }
 
 
         const currentAds =
@@ -559,34 +610,54 @@ app.get("/api/monetag-postback", async (req, res) => {
             Number(existingUser?.total_earned_usd || 0);
 
 
-        await supabase
+        const {
+            error: revenueError
+        } = await supabase
             .from("user_ad_revenues")
             .upsert({
                 telegram_id: telegramId,
                 total_ads_watched: currentAds + 1,
-                total_earned_usd: currentUsd + estimatedPrice,
-                last_ad_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
+                total_earned_usd:
+                    currentUsd + estimatedPrice,
+                last_ad_at:
+                    new Date().toISOString(),
+                updated_at:
+                    new Date().toISOString()
             });
 
 
+        if (revenueError) {
+
+            console.error(
+                "[Monetag] Revenue update error:",
+                revenueError.message
+            );
+        }
+
+
         // ==========================================
-        // 12. LOG
+        // 13. LOG THÀNH CÔNG
         // ==========================================
 
         console.log(
             `[Monetag SUCCESS] ` +
             `ID=${telegramId} | ` +
-            `Task=${task_type} | ` +
-            `Reward=${rewardType} | ` +
+            `Task=${taskType} | ` +
             `Event=${eventType} | ` +
+            `Reward=${rewardType} | ` +
             `Price=$${estimatedPrice} | ` +
-            `ymid=${ymidString} | ` +
-            `RPC=${data}`
+            `Zone=${zoneId} | ` +
+            `ymid=${ymidValue} | ` +
+            `RPC=${rewardResult}`
         );
 
 
+        // ==========================================
+        // 14. TRẢ OK CHO MONETAG
+        // ==========================================
+
         return res.status(200).send("OK");
+
 
     } catch (err) {
 

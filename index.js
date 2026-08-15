@@ -115,7 +115,12 @@ const USER_RPC_MAP = {
     getBattleHistory: "rpc_get_battle_history",
     getWithdrawPage: "rpc_get_withdraw_page",
     getReferralPage: "rpc_get_referral_page",
-    WatchPet: "rpc_get_active_pet"
+    WatchPet: "rpc_get_active_pet",
+    sunMoonJoin: "rpc_sunmoon_join",
+    sunMoonState: "rpc_sunmoon_state",
+    sunMoonSelectCell: "rpc_sunmoon_select_cell",
+    sunMoonLeaveQueue: "rpc_sunmoon_leave_queue",
+    sunMoonResult: "rpc_sunmoon_result"
 };
 
 const ADMIN_RPC_MAP = {

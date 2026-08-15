@@ -273,28 +273,44 @@ app.post("/api/checkTelegramTask", async (req, res) => {
 // ==========================================
 app.get("/api/monetag-postback", async (req, res) => {
     try {
-        // Lấy telegram_id từ tham số query trên URL (?telegram_id=...)
+        // 1. Lấy tất cả các thông số Monetag truyền về qua URL
         const telegramId = req.query.telegram_id;
+        const taskType = req.query.task_type || "food"; // Đã sửa: Lấy động từ task_type ({request_var})
+        const estimatedPrice = req.query.price || "0";  // Giá tiền ước tính (USD)
+        const zoneId = req.query.zone || null;          // ID vùng quảng cáo
+        const eventType = req.query.event || null;      // Loại sự kiện (impression/click)
 
+        // Kiểm tra xem có Telegram ID không
         if (!telegramId) {
+            console.error("[Monetag Postback Error]: Thiếu telegram_id");
             return res.status(400).send("Missing telegram_id");
         }
 
-        console.log(`[Monetag Postback] Nhận xác nhận xem quảng cáo cho Telegram ID: ${telegramId}`);
+        console.log(`[Monetag Postback] ID: ${telegramId} | Task: ${taskType} | Giá: $${estimatedPrice} | Event: ${eventType}`);
 
-        // Gọi hàm RPC trực tiếp trên Supabase để cộng thưởng cho User
-        // LƯU Ý: Hãy chắc chắn bạn đã có hàm rpc_claim_ad_task trên Supabase hỗ trợ truyền p_telegram_id
+        // 2. Gọi hàm RPC trên Supabase để cộng thưởng trực tiếp cho User
         const { data, error } = await supabase.rpc("rpc_claim_ad_task", {
             p_telegram_id: Number(telegramId),
-            p_task_type: "food" // Hoặc loại task tương ứng
+            p_task_type: taskType
         });
 
         if (error) {
-            console.error("[Monetag Postback Error]:", error.message);
+            console.error("[Monetag Postback DB Error]:", error.message);
             return res.status(500).send("Database error");
         }
 
-        // Báo lại cho Monetag biết là Server bạn đã nhận thông tin thành công
+        // 3. (Tùy chọn) Bạn có thể lưu lại thông tin doanh thu này vào 1 bảng log nếu muốn
+        /*
+        await supabase.from("ad_revenue_logs").insert({
+            telegram_id: Number(telegramId),
+            task_type: taskType,
+            price: parseFloat(estimatedPrice),
+            zone_id: zoneId,
+            event_type: eventType
+        });
+        */
+
+        // 4. Báo lại cho Monetag biết là Server bạn đã nhận thông tin thành công
         return res.status(200).send("OK");
 
     } catch (err) {

@@ -274,7 +274,7 @@ app.post("/api/checkTelegramTask", async (req, res) => {
 app.get("/api/monetag-postback", async (req, res) => {
     try {
         const telegramId = req.query.telegram_id;
-        const taskType = req.query.task_type || "food";
+        const taskType = req.query.task_type || req.query.request_var || "food";
         const estimatedPrice = parseFloat(req.query.price || "0"); // Đổi sang số thực
 
         if (!telegramId) return res.status(400).send("Missing telegram_id");

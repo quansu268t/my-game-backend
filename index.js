@@ -373,7 +373,8 @@ app.get("/api/monetag-postback", async (req, res) => {
             "food",
             "power",
             "battle",
-            "coin"
+            "coin",
+            "sunmoon"
         ]);
 
         const taskType = String(task_type || "").trim();

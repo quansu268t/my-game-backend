@@ -35,7 +35,7 @@ app.use(express.json());
 // Chống Spam API (Rate Limiting) - Chỉ áp dụng cho các route /api/
 const apiLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1 phút
-    max: 25, // Tối đa 25 request/phút cho 1 IP
+    max: 36, // Tối đa 36 request/phút cho 1 IP
     message: { ok: false, error: "Bạn gửi quá nhiều yêu cầu, hãy thử lại sau ít phút!" }
 });
 

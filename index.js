@@ -1,4 +1,4 @@
-const express = require("express");
+lconst express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
@@ -102,12 +102,11 @@ async function getCachedRpc(cacheKey, rpcName, rpcParams = {}, ttlSeconds = 30) 
 // 4. DANH SÁCH CONFIG RPC
 // ==========================================
 const USER_RPC_MAP = {
-    claimAd: "rpc_claim_ad_task", upgradePetStat: "rpc_upgrade_pet_stat", feedPet: "rpc_feed_pet",
+    upgradePetStat: "rpc_upgrade_pet_stat", feedPet: "rpc_feed_pet",
     missionPage: "rpc_get_mission_page", battle: "rpc_battle", dailyCheckin: "rpc_daily_checkin",
     startGame: "rpc_start_game", redeemGiftCode: "redeem_gift_code", claimReferralReward: "rpc_claim_referral_reward",
     summonOne: "rpc_summon_one", summonFive: "rpc_summon_five", exchangePoints: "exchange_points",
     withdrawCreate: "rpc_withdraw_create", switchPet: "rpc_switch_pet", findOpponent: "rpc_find_opponent",
-    claimTelegramTask: "rpc_claim_telegram_task",
     getTopBar: "rpc_get_topbar",
     getActivePet: "rpc_get_active_pet_page",
     getMyPets: "rpc_get_my_pets",
@@ -138,7 +137,14 @@ const RPC_CONFIG = {
     "rpc_get_coin_leaderboard": { ttl: 1800, isUserSpecific: false }, "rpc_get_referral_leaderboard": { ttl: 1800, isUserSpecific: false },
     "rpc_get_leaderboard_season": { ttl: 3600, isUserSpecific: false }
 };
-
+// ==========================================
+// BATCH RPC ALLOWLIST
+// CHỈ READ-ONLY RPC ĐƯỢC PHÉP ĐI QUA BATCH
+// ==========================================
+const BATCH_RPC_ALLOWLIST = new Set([
+    "rpc_get_topbar",
+    "rpc_get_active_pet",
+]);
 // ==========================================
 // 5. ĐỊNH TUYẾN CÁC API (ROUTES)
 // ==========================================
@@ -199,6 +205,109 @@ app.post("/api/adminRpc", async (req, res) => {
     }
 });
 
+const TELEGRAM_TASK_CHATS = {
+    1: "-1003870922007",
+    2: "-1004469756258"
+};
+
+app.post("/api/claimTelegramTask", async (req, res) => {
+    const { token, taskId } = req.body;
+
+    if (!token) {
+        return res.status(401).json({
+            ok: false,
+            error: "MISSING_TOKEN"
+        });
+    }
+
+    if (![1, 2].includes(Number(taskId))) {
+        return res.status(400).json({
+            ok: false,
+            error: "INVALID_TASK"
+        });
+    }
+
+    try {
+        const payload = jwt.verify(
+            token,
+            process.env.JWT_SECRET
+        );
+
+        const telegramId = Number(payload.telegram_id);
+        const chatId = TELEGRAM_TASK_CHATS[Number(taskId)];
+
+        const url =
+            `https://api.telegram.org/bot${process.env.BOT_TOKEN}` +
+            `/getChatMember?chat_id=${encodeURIComponent(chatId)}` +
+            `&user_id=${telegramId}`;
+
+        const response = await fetch(url);
+        const result = await response.json();
+
+        if (!result.ok) {
+            return res.status(400).json({
+                ok: false,
+                error: "TELEGRAM_CHECK_FAILED"
+            });
+        }
+
+        const status = result.result?.status;
+
+        const joined =
+            status === "member" ||
+            status === "administrator" ||
+            status === "creator";
+
+        if (!joined) {
+            return res.status(403).json({
+                ok: false,
+                error: "NOT_JOINED"
+            });
+        }
+
+        const { data, error } = await supabase.rpc(
+            "rpc_claim_telegram_task",
+            {
+                p_telegram_id: telegramId,
+                p_task_id: Number(taskId)
+            }
+        );
+
+        if (error) {
+            console.error("[claimTelegramTask]", error);
+
+            return res.status(500).json({
+                ok: false,
+                error: "CLAIM_FAILED"
+            });
+        }
+
+        return res.json({
+            ok: true,
+            data
+        });
+
+    } catch (err) {
+
+        if (
+            err.name === "JsonWebTokenError" ||
+            err.name === "TokenExpiredError"
+        ) {
+            return res.status(401).json({
+                ok: false,
+                error: "INVALID_TOKEN"
+            });
+        }
+
+        console.error("[claimTelegramTask]", err);
+
+        return res.status(500).json({
+            ok: false,
+            error: "SERVER_ERROR"
+        });
+    }
+});
+
 // API: Get Data (Cache)
 app.post("/api/getData", async (req, res) => {
     const { rpcName, params = {}, token } = req.body;
@@ -225,30 +334,116 @@ app.post("/api/getData", async (req, res) => {
     }
 });
 
-// API: Batch Data
+// ==========================================
+// API: Batch Data - READ ONLY
+// ==========================================
 app.post("/api/batchData", async (req, res) => {
     const { requests, token } = req.body;
-    if (!Array.isArray(requests)) return res.status(400).json({ error: "Invalid requests" });
-    if (!token) return res.status(401).json({ error: "Missing token" });
-    for (const item of requests) {
-      if (!item?.rpcName || !RPC_CONFIG[item.rpcName]) {
+
+    if (!Array.isArray(requests)) {
         return res.status(400).json({
-            error: "RPC không hợp lệ"
+            ok: false,
+            error: "INVALID_REQUESTS"
         });
-      }
     }
+
+    // Giới hạn số RPC trong một batch
+    if (requests.length < 1 || requests.length > 5) {
+        return res.status(400).json({
+            ok: false,
+            error: "INVALID_BATCH_SIZE"
+        });
+    }
+
+    if (!token) {
+        return res.status(401).json({
+            ok: false,
+            error: "MISSING_TOKEN"
+        });
+    }
+
     try {
-        const payload = jwt.verify(token, process.env.JWT_SECRET);
-        const results = await Promise.all(requests.map(async (item) => {
-            const { rpcName, params = {} } = item;
-            params.p_telegram_id = payload.telegram_id;
-            const cacheKey = `${rpcName}:user_${payload.telegram_id}`;
-            const resData = await getCachedRpc(cacheKey, rpcName, params, 20);
-            return { rpcName, data: resData.data };
-        }));
-        return res.json({ ok: true, data: results });
+        const payload = jwt.verify(
+            token,
+            process.env.JWT_SECRET
+        );
+
+        if (!payload.telegram_id) {
+            return res.status(401).json({
+                ok: false,
+                error: "INVALID_TOKEN"
+            });
+        }
+
+        const results = await Promise.all(
+            requests.map(async (item) => {
+
+                const rpcName = item?.rpcName;
+
+                // Tuyệt đối không cho client tự chọn RPC
+                if (!BATCH_RPC_ALLOWLIST.has(rpcName)) {
+                    throw new Error("RPC_NOT_ALLOWED");
+                }
+
+                const params = {
+                    ...(item?.params || {}),
+                    p_telegram_id: payload.telegram_id
+                };
+
+                const config = RPC_CONFIG[rpcName];
+
+                // Bắt buộc phải là RPC user-specific
+                if (!config || !config.isUserSpecific) {
+                    throw new Error("RPC_NOT_ALLOWED");
+                }
+
+                const cacheKey =
+                    `${rpcName}:user_${payload.telegram_id}`;
+
+                const result = await getCachedRpc(
+                    cacheKey,
+                    rpcName,
+                    params,
+                    config.ttl
+                );
+
+                return {
+                    rpcName,
+                    data: result.data
+                };
+            })
+        );
+
+        return res.json({
+            ok: true,
+            data: results
+        });
+
     } catch (err) {
-        return res.status(401).json({ error: "INVALID_TOKEN" });
+
+        if (err.message === "RPC_NOT_ALLOWED") {
+            return res.status(403).json({
+                ok: false,
+                error: "RPC_NOT_ALLOWED"
+            });
+        }
+
+        if (
+            err.name === "JsonWebTokenError" ||
+            err.name === "TokenExpiredError"
+        ) {
+            return res.status(401).json({
+                ok: false,
+                error: "INVALID_TOKEN"
+            });
+        }
+
+        console.error("[batchData]", err);
+
+        return res.status(500).json({
+            ok: false,
+            error: "BATCH_FAILED"
+        });
     }
 });
 

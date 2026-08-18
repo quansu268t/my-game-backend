@@ -113,6 +113,141 @@ async function getCachedRpc(cacheKey, rpcName, rpcParams = {}, ttlSeconds = 30) 
 }
 
 // ==========================================
+// REDIS RATE LIMIT - TELEGRAM ID + ACTION
+// ==========================================
+
+const RATE_LIMITS = {
+    // Read-only
+    getTopBar:        { limit: 20, window: 10 },
+    getActivePet:     { limit: 20, window: 10 },
+    getMyPets:        { limit: 15, window: 10 },
+    getBattlePage:    { limit: 15, window: 10 },
+    getBattleHistory: { limit: 10, window: 10 },
+    getWithdrawPage:  { limit: 10, window: 10 },
+    getReferralPage:  { limit: 10, window: 10 },
+
+    // Gameplay
+    startGame:        { limit: 3, window: 30 },
+    findOpponent:     { limit: 5, window: 10 },
+    battle:           { limit: 5, window: 10 },
+
+    // Pet / resources
+    feedPet:          { limit: 5, window: 10 },
+    upgradePetStat:   { limit: 5, window: 10 },
+    switchPet:        { limit: 5, window: 10 },
+
+    // Summon
+    summonOne:        { limit: 3, window: 10 },
+    summonFive:       { limit: 2, window: 10 },
+
+    // Daily / tasks
+    dailyCheckin:     { limit: 3, window: 30 },
+
+    // Economy
+    exchangePoints:   { limit: 3, window: 30 },
+
+    // High-risk
+    redeemGiftCode:   { limit: 3, window: 60 },
+    withdrawCreate:   { limit: 2, window: 60 },
+    claimReferralReward: { limit: 3, window: 60 },
+
+    // Sunmoon
+    sunMoonJoin:       { limit: 3, window: 10 },
+    sunMoonSelectCell: { limit: 5, window: 10 },
+    sunMoonLeaveQueue: { limit: 3, window: 10 },
+    sunMoonResult:     { limit: 5, window: 10 },
+    sunMoonState:      { limit: 10, window: 10 },
+    telegramTask:      {  limit: 3, window: 60 },
+    batchData:         { limit: 10, window: 10 }
+};
+
+
+// Trả về:
+// {
+//   allowed: true/false,
+//   remaining: number,
+//   retryAfter: seconds
+// }
+async function checkTelegramRateLimit(
+    telegramId,
+    action
+) {
+    const config = RATE_LIMITS[action];
+
+    // Action không nằm trong danh sách
+    // → không áp rate-limit riêng
+    if (!config) {
+        return {
+            allowed: true,
+            remaining: null,
+            retryAfter: 0
+        };
+    }
+
+    const key =
+        `rl:v1:${telegramId}:${action}`;
+
+    try {
+        // Tạo counter + TTL trong lần request đầu tiên
+        const created = await redis.set(
+            key,
+            "1",
+            {
+                nx: true,
+                ex: config.window
+            }
+        );
+
+        if (created) {
+            return {
+                allowed: true,
+                remaining: config.limit - 1,
+                retryAfter: 0
+            };
+        }
+
+        // Key đã tồn tại → tăng counter
+        const count = await redis.incr(key);
+
+        if (count > config.limit) {
+            const ttl = await redis.ttl(key);
+
+            return {
+                allowed: false,
+                remaining: 0,
+                retryAfter:
+                    ttl > 0
+                        ? ttl
+                        : config.window
+            };
+        }
+
+        return {
+            allowed: true,
+            remaining: config.limit - count,
+            retryAfter: 0
+        };
+
+    } catch (err) {
+        /*
+         * Redis lỗi không được làm game chết.
+         *
+         * Supabase/Postgres vẫn là lớp bảo vệ cuối.
+         */
+        console.error(
+            `[Redis RateLimit Error] ${action}:`,
+            err.message
+        );
+
+        return {
+            allowed: true,
+            remaining: null,
+            retryAfter: 0
+        };
+    }
+}
+
+// ==========================================
 // 4. DANH SÁCH CONFIG RPC
 // ==========================================
 const USER_RPC_MAP = {
@@ -183,17 +318,102 @@ app.post("/api/login", async (req, res) => {
 // API: User RPC
 app.post("/api/userRpc", async (req, res) => {
     const { token, action, params = {} } = req.body;
-    if (!token) return res.status(401).json({ error: "Missing token" });
+
+    if (!token) {
+        return res.status(401).json({
+            error: "Missing token"
+        });
+    }
+
     try {
-        const payload = jwt.verify(token, process.env.JWT_SECRET);
+        const payload = jwt.verify(
+            token,
+            process.env.JWT_SECRET
+        );
+
+        const telegramId =
+            Number(payload.telegram_id);
+
+        if (
+            !Number.isSafeInteger(telegramId) ||
+            telegramId <= 0
+        ) {
+            return res.status(401).json({
+                error: "INVALID_TOKEN"
+            });
+        }
+
         const rpc = USER_RPC_MAP[action];
-        if (!rpc) return res.status(400).json({ error: "Unknown action" });
-        params.p_telegram_id = payload.telegram_id;
-        const { data, error } = await supabase.rpc(rpc, params);
-        if (error) return res.status(500).json({ ok: false, error: error.message });
-        return res.json({ ok: true, data });
+
+        if (!rpc) {
+            return res.status(400).json({
+                error: "Unknown action"
+            });
+        }
+
+        // ==========================================
+        // REDIS RATE LIMIT
+        // ==========================================
+
+        const rate = await checkTelegramRateLimit(
+            telegramId,
+            action
+        );
+
+        if (!rate.allowed) {
+            return res.status(429).json({
+                ok: false,
+                error: "RATE_LIMITED",
+                retry_after: rate.retryAfter
+            });
+        }
+
+        // ==========================================
+        // KHÔNG CHO CLIENT GIẢ TELEGRAM ID
+        // ==========================================
+
+        params.p_telegram_id = telegramId;
+
+        const {
+            data,
+            error
+        } = await supabase.rpc(
+            rpc,
+            params
+        );
+
+        if (error) {
+            return res.status(500).json({
+                ok: false,
+                error: error.message
+            });
+        }
+
+        return res.json({
+            ok: true,
+            data
+        });
+
     } catch (err) {
-        return res.status(401).json({ error: "INVALID_TOKEN" });
+
+        if (
+            err.name === "JsonWebTokenError" ||
+            err.name === "TokenExpiredError"
+        ) {
+            return res.status(401).json({
+                error: "INVALID_TOKEN"
+            });
+        }
+
+        console.error(
+            "[userRpc]",
+            err
+        );
+
+        return res.status(500).json({
+            ok: false,
+            error: "SERVER_ERROR"
+        });
     }
 });
 
@@ -248,6 +468,18 @@ app.post("/api/claimTelegramTask", async (req, res) => {
         );
 
         const telegramId = Number(payload.telegram_id);
+        const rate = await checkTelegramRateLimit(
+             telegramId,
+             "telegramTask"
+        );
+
+        if (!rate.allowed) {
+           return res.status(429).json({
+               ok: false,
+               error: "RATE_LIMITED",
+               retry_after: rate.retryAfter
+           });
+        }
         const chatId = TELEGRAM_TASK_CHATS[Number(taskId)];
 
         const url =

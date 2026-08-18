@@ -13,23 +13,37 @@ const app = express();
 // ==========================================
 
 // Khóa CORS
-const allowedOrigins = [
-    "https://my-game-backend-o7ij.onrender.com",
+const ALLOWED_ORIGINS = new Set([
     "https://web.telegram.org",
     "https://t.me",
     "https://my-telegram-game-jet.vercel.app"
-];
+]);
 
 app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) {
-             callback(null, true);
-        } else {
-             callback(new Error("CORS Policy: Không có quyền truy cập!"));
-        }
-    }
-}));
+    origin(origin, callback) {
 
+        // Requests không có Origin
+        // ví dụ server-to-server
+        if (!origin) {
+            return callback(null, true);
+        }
+
+        if (ALLOWED_ORIGINS.has(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(
+            new Error("CORS Policy: Origin không được phép")
+        );
+    },
+
+    methods: ["GET", "POST", "OPTIONS"],
+
+    allowedHeaders: [
+        "Content-Type",
+        "Authorization"
+    ]
+}));
 app.use(express.json());
 
 // Chống Spam API (Rate Limiting) - Chỉ áp dụng cho các route /api/

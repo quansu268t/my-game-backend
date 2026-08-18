@@ -22,10 +22,10 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: function (origin, callback) {
-        if (!origin || allowedOrigins.some(domain => origin.startsWith(domain))) {
-            callback(null, true);
+        if (!origin || allowedOrigins.includes(origin)) {
+             callback(null, true);
         } else {
-            callback(new Error("CORS Policy: Không có quyền truy cập!"));
+             callback(new Error("CORS Policy: Không có quyền truy cập!"));
         }
     }
 }));
@@ -230,6 +230,13 @@ app.post("/api/batchData", async (req, res) => {
     const { requests, token } = req.body;
     if (!Array.isArray(requests)) return res.status(400).json({ error: "Invalid requests" });
     if (!token) return res.status(401).json({ error: "Missing token" });
+    for (const item of requests) {
+      if (!item?.rpcName || !RPC_CONFIG[item.rpcName]) {
+        return res.status(400).json({
+            error: "RPC không hợp lệ"
+        });
+      }
+    }
     try {
         const payload = jwt.verify(token, process.env.JWT_SECRET);
         const results = await Promise.all(requests.map(async (item) => {

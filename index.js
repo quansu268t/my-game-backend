@@ -95,6 +95,7 @@ function verifyTelegramInitData(initData, botToken) {
     return JSON.parse(params.get("user"));
 }
 
+
 async function getCachedRpc(cacheKey, rpcName, rpcParams = {}, ttlSeconds = 30) {
     try {
         const cachedData = await redis.get(cacheKey);
@@ -361,19 +362,79 @@ async function checkIpRateLimit(ip, action) {
 // Ping
 app.get("/ping", (req, res) => res.status(200).send("OK"));
 
+
 // API: Login
 app.post("/api/login", async (req, res) => {
+
+    const ip =
+        req.headers["x-forwarded-for"]?.split(",")[0]?.trim()
+        || req.ip
+        || "unknown";
+
+    const rate = await checkIpRateLimit(
+        ip,
+        "login"
+    );
+
+    if (!rate.allowed) {
+        return res.status(429).json({
+            ok: false,
+            error: "RATE_LIMITED",
+            retry_after: rate.retryAfter
+        });
+    }
+
     const { initData } = req.body;
-    if (!initData) return res.status(400).json({ error: "Missing initData" });
-    const user = verifyTelegramInitData(initData, process.env.BOT_TOKEN);
-    if (!user) return res.status(401).json({ error: "Invalid initData" });
 
-    const { data: banned } = await supabase.from("banned_users").select("telegram_id").eq("telegram_id", user.id).maybeSingle();
-    if (banned) return res.status(403).json({ error: "BANNED" });
+    if (!initData) {
+        return res.status(400).json({
+            error: "Missing initData"
+        });
+    }
 
-    const token = jwt.sign({ telegram_id: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: "30m" });
-    return res.json({ ok: true, token, telegram_id: user.id, username: user.username, first_name: user.first_name });
+    const user = verifyTelegramInitData(
+        initData,
+        process.env.BOT_TOKEN
+    );
+
+    if (!user) {
+        return res.status(401).json({
+            error: "Invalid initData"
+        });
+    }
+
+    const { data: banned } = await supabase
+        .from("banned_users")
+        .select("telegram_id")
+        .eq("telegram_id", user.id)
+        .maybeSingle();
+
+    if (banned) {
+        return res.status(403).json({
+            error: "BANNED"
+        });
+    }
+
+    const token = jwt.sign(
+        {
+            telegram_id: user.id,
+            username: user.username
+        },
+        process.env.JWT_SECRET,
+        {
+            expiresIn: "30m"
+        }
+    );
+
+    return res.json({
+        ok: true,
+        token,
+        telegram_id: user.id,
+        username: user.username,
+        first_name: user.first_name
+    });
 });
+
 
 // API: User RPC
 app.post("/api/userRpc", async (req, res) => {
@@ -476,6 +537,7 @@ app.post("/api/userRpc", async (req, res) => {
         });
     }
 });
+
 
 // API: Admin RPC
 app.post("/api/adminRpc", async (req, res) => {
@@ -601,10 +663,12 @@ app.post("/api/adminRpc", async (req, res) => {
     }
 });
 
+
 const TELEGRAM_TASK_CHATS = {
     1: "-1003870922007",
     2: "-1004469756258"
 };
+
 
 app.post("/api/claimTelegramTask", async (req, res) => {
     const { token, taskId } = req.body;
@@ -716,6 +780,7 @@ app.post("/api/claimTelegramTask", async (req, res) => {
     }
 });
 
+
 // API: Get Data (Cache)
 app.post("/api/getData", async (req, res) => {
     const { rpcName, params = {}, token } = req.body;
@@ -803,6 +868,7 @@ app.post("/api/getData", async (req, res) => {
         });
     }
 });
+
 
 // ==========================================
 // API: Batch Data - READ ONLY
@@ -928,6 +994,7 @@ app.post("/api/batchData", async (req, res) => {
     }
 });
 
+
 // API: App Status
 app.post("/api/appStatus", async (req, res) => {
     const { token } = req.body;
@@ -944,6 +1011,7 @@ app.post("/api/appStatus", async (req, res) => {
     }
 });
 
+
 // API: Check Telegram Task
 app.post("/api/checkTelegramTask", async (req, res) => {
     const { initData, chatId } = req.body;
@@ -955,7 +1023,10 @@ app.post("/api/checkTelegramTask", async (req, res) => {
     if (!result.ok) return res.json({ joined: false, telegram: result });
     const status = result.result.status;
     return res.json({ joined: status === "member" || status === "administrator" || status === "creator", status });
-});        
+});    
+
+
+
 // ==========================================
 // MONETAG POSTBACK
 // SERVER-TO-SERVER REWARD
@@ -1243,6 +1314,7 @@ return res.status(200).send("OK");
         return res.status(500).send("Server error");
     }
 });
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server chạy mượt mà tại cổng ${PORT}`));
         

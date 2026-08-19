@@ -118,8 +118,8 @@ async function getCachedRpc(cacheKey, rpcName, rpcParams = {}, ttlSeconds = 30) 
 
 const RATE_LIMITS = {
     // Read-only
-    getTopBar:        { limit: 20, window: 10 },
-    getActivePet:     { limit: 20, window: 10 },
+    getTopBar:        { limit: 12, window: 10 },
+    WatchPet:         { limit: 3, window: 10  },
     getMyPets:        { limit: 15, window: 10 },
     getBattlePage:    { limit: 15, window: 10 },
     getBattleHistory: { limit: 10, window: 10 },
@@ -147,22 +147,37 @@ const RATE_LIMITS = {
     exchangePoints:   { limit: 3, window: 30 },
 
     // High-risk
-    redeemGiftCode:   { limit: 1, window: 60 },
-    withdrawCreate:   { limit: 1, window: 60 },
+    redeemGiftCode:   { limit: 1, window: 120 },
+    withdrawCreate:   { limit: 1, window: 86400 },
     claimReferralReward: { limit: 3, window: 60 },
 
     // Sunmoon
-    sunMoonJoin:       { limit: 3, window: 10 },
+    sunMoonJoin:       { limit: 3, window: 9 },
     sunMoonSelectCell: { limit: 5, window: 10 },
     sunMoonLeaveQueue: { limit: 3, window: 10 },
     sunMoonResult:     { limit: 5, window: 10 },
     sunMoonState:      { limit: 10, window: 10 },
+
+    //API
     telegramTask:      { limit: 3, window: 30 },
     batchData:         { limit: 10, window: 10 },
-    getData:           { limit: 15, window: 10 }
+    getData:           { limit: 15, window: 10 },
+    admin_createGiftCode: { limit: 5, window: 60 },
+    admin_rejectWithdraw: { limit: 20, window: 60 },
+    admin_approveWithdraw: { limit: 20, window: 60 },
+    admin_getWithdraws: { limit: 20, window: 10 },
+    admin_toggleMaintenance: { limit: 3, window: 60 }
 };
 
 
+const missingRateLimits = Object.keys(USER_RPC_MAP)
+    .filter(action => !RATE_LIMITS[action]);
+
+if (missingRateLimits.length > 0) {
+    throw new Error(
+        `[SECURITY] Missing rate limits: ${missingRateLimits.join(", ")}`
+    );
+}
 // Trả về:
 // {
 //   allowed: true/false,
@@ -421,22 +436,124 @@ app.post("/api/userRpc", async (req, res) => {
 // API: Admin RPC
 app.post("/api/adminRpc", async (req, res) => {
     const { token, action, params = {} } = req.body;
+
+    if (!token) {
+        return res.status(401).json({
+            error: "Missing token"
+        });
+    }
+
     try {
-        const payload = jwt.verify(token, process.env.JWT_SECRET);
+        const payload = jwt.verify(
+            token,
+            process.env.JWT_SECRET
+        );
+
+        const adminId = Number(payload.telegram_id);
+
+        if (
+            !Number.isSafeInteger(adminId) ||
+            adminId <= 0
+        ) {
+            return res.status(401).json({
+                error: "INVALID_TOKEN"
+            });
+        }
+
         const rpc = ADMIN_RPC_MAP[action];
-        if (!rpc) return res.status(400).json({ error: "Unknown action" });
-        
-        const adminId = payload.telegram_id;
-        const { data: admin, error: adminError } = await supabase.from("admins").select("telegram_id").eq("telegram_id", adminId).maybeSingle();
-        if (adminError) return res.status(500).json({ error: adminError.message });
-        if (!admin) return res.status(403).json({ error: "NOT_ADMIN" });
-        
+
+        if (!rpc) {
+            return res.status(400).json({
+                error: "Unknown action"
+            });
+        }
+
+        // ==========================================
+        // KIỂM TRA ADMIN
+        // ==========================================
+
+        const {
+            data: admin,
+            error: adminError
+        } = await supabase
+            .from("admins")
+            .select("telegram_id")
+            .eq("telegram_id", adminId)
+            .maybeSingle();
+
+        if (adminError) {
+            return res.status(500).json({
+                error: adminError.message
+            });
+        }
+
+        if (!admin) {
+            return res.status(403).json({
+                error: "NOT_ADMIN"
+            });
+        }
+
+        // ==========================================
+        // REDIS RATE LIMIT - ADMIN + ACTION
+        // ==========================================
+
+        const rate = await checkTelegramRateLimit(
+            adminId,
+            `admin_${action}`
+        );
+
+        if (!rate.allowed) {
+            return res.status(429).json({
+                ok: false,
+                error: "RATE_LIMITED",
+                retry_after: rate.retryAfter
+            });
+        }
+
+        // ==========================================
+        // KHÔNG TIN p_admin_id TỪ CLIENT
+        // ==========================================
+
         params.p_admin_id = adminId;
-        const { data, error } = await supabase.rpc(rpc, params);
-        if (error) return res.status(500).json({ error: error.message });
-        return res.json({ ok: true, data });
+
+        const {
+            data,
+            error
+        } = await supabase.rpc(
+            rpc,
+            params
+        );
+
+        if (error) {
+            return res.status(500).json({
+                error: error.message
+            });
+        }
+
+        return res.json({
+            ok: true,
+            data
+        });
+
     } catch (err) {
-        return res.status(401).json({ error: "INVALID_TOKEN" });
+
+        if (
+            err.name === "JsonWebTokenError" ||
+            err.name === "TokenExpiredError"
+        ) {
+            return res.status(401).json({
+                error: "INVALID_TOKEN"
+            });
+        }
+
+        console.error(
+            "[adminRpc]",
+            err
+        );
+
+        return res.status(500).json({
+            error: "SERVER_ERROR"
+        });
     }
 });
 

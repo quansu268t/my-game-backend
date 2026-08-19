@@ -127,28 +127,28 @@ const RATE_LIMITS = {
     getReferralPage:  { limit: 10, window: 10 },
 
     // Gameplay
-    startGame:        { limit: 3, window: 30 },
-    findOpponent:     { limit: 5, window: 10 },
-    battle:           { limit: 5, window: 10 },
+    startGame:        { limit: 2, window: 40 },
+    findOpponent:     { limit: 5, window: 20 },
+    battle:           { limit: 5, window: 15 },
 
     // Pet / resources
-    feedPet:          { limit: 5, window: 10 },
-    upgradePetStat:   { limit: 5, window: 10 },
-    switchPet:        { limit: 5, window: 10 },
+    feedPet:          { limit: 3, window: 15 },
+    upgradePetStat:   { limit: 2, window: 20 },
+    switchPet:        { limit: 3, window: 20 },
 
     // Summon
-    summonOne:        { limit: 3, window: 10 },
-    summonFive:       { limit: 2, window: 10 },
+    summonOne:        { limit: 3, window: 15 },
+    summonFive:       { limit: 2, window: 20 },
 
     // Daily / tasks
-    dailyCheckin:     { limit: 3, window: 30 },
+    dailyCheckin:     { limit: 2, window: 20 },
 
     // Economy
     exchangePoints:   { limit: 3, window: 30 },
 
     // High-risk
-    redeemGiftCode:   { limit: 3, window: 60 },
-    withdrawCreate:   { limit: 2, window: 60 },
+    redeemGiftCode:   { limit: 1, window: 60 },
+    withdrawCreate:   { limit: 1, window: 60 },
     claimReferralReward: { limit: 3, window: 60 },
 
     // Sunmoon
@@ -157,8 +157,9 @@ const RATE_LIMITS = {
     sunMoonLeaveQueue: { limit: 3, window: 10 },
     sunMoonResult:     { limit: 5, window: 10 },
     sunMoonState:      { limit: 10, window: 10 },
-    telegramTask:      {  limit: 3, window: 60 },
-    batchData:         { limit: 10, window: 10 }
+    telegramTask:      { limit: 3, window: 30 },
+    batchData:         { limit: 10, window: 10 },
+    getData:           { limit: 15, window: 10 }
 };
 
 
@@ -557,26 +558,88 @@ app.post("/api/claimTelegramTask", async (req, res) => {
 // API: Get Data (Cache)
 app.post("/api/getData", async (req, res) => {
     const { rpcName, params = {}, token } = req.body;
-    if (!rpcName || !RPC_CONFIG[rpcName]) return res.status(400).json({ error: "RPC không hợp lệ" });
+
+    if (!rpcName || !RPC_CONFIG[rpcName]) {
+        return res.status(400).json({
+            error: "RPC không hợp lệ"
+        });
+    }
+
     const config = RPC_CONFIG[rpcName];
     let finalTelegramId = null;
 
     if (config.isUserSpecific) {
-        if (!token) return res.status(401).json({ error: "Missing token" });
+        if (!token) {
+            return res.status(401).json({
+                error: "Missing token"
+            });
+        }
+
         try {
-            const payload = jwt.verify(token, process.env.JWT_SECRET);
-            finalTelegramId = payload.telegram_id;
+            const payload = jwt.verify(
+                token,
+                process.env.JWT_SECRET
+            );
+
+            finalTelegramId = Number(payload.telegram_id);
+
+            if (
+                !Number.isSafeInteger(finalTelegramId) ||
+                finalTelegramId <= 0
+            ) {
+                return res.status(401).json({
+                    error: "INVALID_TOKEN"
+                });
+            }
+
             params.p_telegram_id = finalTelegramId;
+
+            // ==========================================
+            // REDIS RATE LIMIT - GET DATA
+            // ==========================================
+
+            const rate = await checkTelegramRateLimit(
+                finalTelegramId,
+                "getData"
+            );
+
+            if (!rate.allowed) {
+                return res.status(429).json({
+                    ok: false,
+                    error: "RATE_LIMITED",
+                    retry_after: rate.retryAfter
+                });
+            }
+
         } catch (err) {
-            return res.status(401).json({ error: "INVALID_TOKEN" });
+            return res.status(401).json({
+                error: "INVALID_TOKEN"
+            });
         }
     }
-    const cacheKey = config.isUserSpecific ? `${rpcName}:user_${finalTelegramId}` : `${rpcName}:global`;
+
+    const cacheKey = config.isUserSpecific
+        ? `${rpcName}:user_${finalTelegramId}`
+        : `${rpcName}:global`;
+
     try {
-        const result = await getCachedRpc(cacheKey, rpcName, params, config.ttl);
-        return res.json({ ok: true, source: result.source, data: result.data });
+        const result = await getCachedRpc(
+            cacheKey,
+            rpcName,
+            params,
+            config.ttl
+        );
+
+        return res.json({
+            ok: true,
+            source: result.source,
+            data: result.data
+        });
+
     } catch (err) {
-        return res.status(500).json({ error: err.message });
+        return res.status(500).json({
+            error: err.message
+        });
     }
 });
 
@@ -620,7 +683,18 @@ app.post("/api/batchData", async (req, res) => {
                 error: "INVALID_TOKEN"
             });
         }
+        const rate = await checkTelegramRateLimit(
+              payload.telegram_id,
+               "batchData"
+        );
 
+        if (!rate.allowed) {
+           return res.status(429).json({
+               ok: false,
+               error: "RATE_LIMITED",
+               retry_after: rate.retryAfter
+           });
+        }
         const results = await Promise.all(
             requests.map(async (item) => {
 

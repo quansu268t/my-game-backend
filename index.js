@@ -81,7 +81,7 @@ function verifyTelegramInitData(initData, botToken) {
     if (!authDate) return null;
 
     const currentTime = Math.floor(Date.now() / 1000);
-    if (currentTime - parseInt(authDate, 10) > 7200) return null; // Quá 2 tiếng
+    if (currentTime - parseInt(authDate, 10) > 1800) return null; // Quá 30p
 
     const dataCheckString = [...params.entries()]
         .sort(([a], [b]) => a.localeCompare(b))
@@ -115,6 +115,12 @@ async function getCachedRpc(cacheKey, rpcName, rpcParams = {}, ttlSeconds = 30) 
 // ==========================================
 // REDIS RATE LIMIT - TELEGRAM ID + ACTION
 // ==========================================
+
+
+const IP_RATE_LIMITS = {
+    login:    { limit: 10, window: 60 }
+};
+
 
 const RATE_LIMITS = {
     // Read-only
@@ -178,14 +184,58 @@ const RATE_LIMITS = {
 //   remaining: number,
 //   retryAfter: seconds
 // }
+// ==========================================
+// ATOMIC REDIS RATE LIMIT
+// TELEGRAM ID + ACTION
+// ==========================================
+
+
+async function atomicRateLimit(
+    key,
+    limit,
+    windowSeconds
+) {
+    const result = await redis.eval(
+        `
+        local count = redis.call("INCR", KEYS[1])
+
+        if count == 1 then
+            redis.call("EXPIRE", KEYS[1], ARGV[1])
+        end
+
+        local ttl = redis.call("TTL", KEYS[1])
+        local limit = tonumber(ARGV[2])
+
+        if count > limit then
+            return {0, 0, ttl}
+        end
+
+        return {1, limit - count, ttl}
+        `,
+        [key],
+        [
+            String(windowSeconds),
+            String(limit)
+        ]
+    );
+
+    return {
+        allowed: Number(result[0]) === 1,
+        remaining: Number(result[1]),
+        retryAfter:
+            Number(result[2]) > 0
+                ? Number(result[2])
+                : windowSeconds
+    };
+}
+
+
 async function checkTelegramRateLimit(
     telegramId,
     action
 ) {
     const config = RATE_LIMITS[action];
 
-    // Action không nằm trong danh sách
-    // → không áp rate-limit riêng
     if (!config) {
         return {
             allowed: true,
@@ -194,56 +244,13 @@ async function checkTelegramRateLimit(
         };
     }
 
-    const key =
-        `rl:v1:${telegramId}:${action}`;
-
     try {
-        // Tạo counter + TTL trong lần request đầu tiên
-        const created = await redis.set(
-            key,
-            "1",
-            {
-                nx: true,
-                ex: config.window
-            }
+        return await atomicRateLimit(
+            `rl:v2:${telegramId}:${action}`,
+            config.limit,
+            config.window
         );
-
-        if (created) {
-            return {
-                allowed: true,
-                remaining: config.limit - 1,
-                retryAfter: 0
-            };
-        }
-
-        // Key đã tồn tại → tăng counter
-        const count = await redis.incr(key);
-
-        if (count > config.limit) {
-            const ttl = await redis.ttl(key);
-
-            return {
-                allowed: false,
-                remaining: 0,
-                retryAfter:
-                    ttl > 0
-                        ? ttl
-                        : config.window
-            };
-        }
-
-        return {
-            allowed: true,
-            remaining: config.limit - count,
-            retryAfter: 0
-        };
-
     } catch (err) {
-        /*
-         * Redis lỗi không được làm game chết.
-         *
-         * Supabase/Postgres vẫn là lớp bảo vệ cuối.
-         */
         console.error(
             `[Redis RateLimit Error] ${action}:`,
             err.message
@@ -314,6 +321,39 @@ if (missingRateLimits.length > 0) {
         `[SECURITY] Missing rate limits: ${missingRateLimits.join(", ")}`
     );
 }
+
+//checkIpRateLimit
+async function checkIpRateLimit(ip, action) {
+    const config = IP_RATE_LIMITS[action];
+
+    if (!config) {
+        return {
+            allowed: true,
+            remaining: null,
+            retryAfter: 0
+        };
+    }
+
+    try {
+        return await atomicRateLimit(
+            `rl:ip:v2:${ip}:${action}`,
+            config.limit,
+            config.window
+        );
+    } catch (err) {
+        console.error(
+            `[Redis IP RateLimit Error] ${action}:`,
+            err.message
+        );
+
+        return {
+            allowed: true,
+            remaining: null,
+            retryAfter: 0
+        };
+    }
+}
+
 // ==========================================
 // 5. ĐỊNH TUYẾN CÁC API (ROUTES)
 // ==========================================

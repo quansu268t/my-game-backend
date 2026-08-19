@@ -792,20 +792,30 @@ app.post("/api/checkTelegramTask", async (req, res) => {
         const result = await response.json();
 
         if (!result.ok) {
-            return res.json({
-                ok: true,
-                joined: false
-            });
+
+          console.error("[Telegram getChatMember FAILED]", {
+          taskId: normalizedTaskId,
+          chatId,
+          userId: user.id,
+          error_code: result.error_code,
+          description: result.description
+          });
+
+          return res.status(502).json({
+             ok: false,
+             error: "TELEGRAM_CHECK_FAILED"
+          });
         }
 
         const status =
             result.result?.status;
 
         const joined =
-            status === "member" ||
-            status === "administrator" ||
-            status === "creator";
-
+           status === "member" ||
+           status === "administrator" ||
+           status === "creator" ||
+          (status === "restricted" &&
+        result.result?.is_member === true);
         return res.json({
             ok: true,
             joined,

@@ -126,6 +126,7 @@ const IP_RATE_LIMITS = {
 const RATE_LIMITS = {
     // Read-only
     getTopBar:        { limit: 12, window: 10 },
+    getActivePet: { limit: 15, window: 10 },
     WatchPet:         { limit: 3, window: 10  },
     getMyPets:        { limit: 15, window: 10 },
     getBattlePage:    { limit: 15, window: 10 },

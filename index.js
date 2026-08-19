@@ -178,7 +178,42 @@ const RATE_LIMITS = {
 };
 
 
+const RATE_LIMIT_FAIL_CLOSED = new Set([
+    // User economy / write
+    "startGame",
+    "feedPet",
+    "upgradePetStat",
+    "switchPet",
+    "summonOne",
+    "summonFive",
+    "exchangePoints",
+    "redeemGiftCode",
+    "withdrawCreate",
+    "claimReferralReward",
+    "dailyCheckin",
 
+    // Battle / game state
+    "findOpponent",
+    "battle",
+
+    // SunMoon state-changing
+    "sunMoonJoin",
+    "sunMoonSelectCell",
+    "sunMoonLeaveQueue",
+    "sunMoonResult",
+
+    // Telegram reward
+    "telegramTask",
+
+    // Admin
+    "admin_createGiftCode",
+    "admin_rejectWithdraw",
+    "admin_approveWithdraw",
+    "admin_toggleMaintenance",
+
+    // Login
+    "login"
+]);
 // Trả về:
 // {
 //   allowed: true/false,
@@ -252,15 +287,23 @@ async function checkTelegramRateLimit(
             config.window
         );
     } catch (err) {
-        console.error(
-            `[Redis RateLimit Error] ${action}:`,
-            err.message
-        );
+         console.error(
+           `[Redis RateLimit Error] ${action}:`,
+           err.message
+         );
+
+        if (RATE_LIMIT_FAIL_CLOSED.has(action)) {
+            return {
+               allowed: false,
+               remaining: 0,
+               retryAfter: 5
+            };
+        }
 
         return {
-            allowed: true,
-            remaining: null,
-            retryAfter: 0
+           allowed: true,
+           remaining: null,
+           retryAfter: 0
         };
     }
 }
@@ -343,9 +386,17 @@ async function checkIpRateLimit(ip, action) {
         );
     } catch (err) {
         console.error(
-            `[Redis IP RateLimit Error] ${action}:`,
-            err.message
+           `[Redis IP RateLimit Error] ${action}:`,
+           err.message
         );
+
+        if (RATE_LIMIT_FAIL_CLOSED.has(action)) {
+            return {
+               allowed: false,
+               remaining: 0,
+               retryAfter: 5
+            };
+        }
 
         return {
             allowed: true,

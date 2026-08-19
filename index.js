@@ -6,7 +6,7 @@ const { createClient } = require("@supabase/supabase-js");
 const { Redis } = require("@upstash/redis");
 const rateLimit = require("express-rate-limit");
 const app = express();
-
+app.set("trust proxy", 1);
 
 // ==========================================
 // 1. CẤU HÌNH BẢO MẬT (CORS & RATE LIMIT)
@@ -168,6 +168,7 @@ const RATE_LIMITS = {
 
     //API
     telegramTask:      { limit: 3, window: 30 },
+    telegramTaskCheck: { limit: 5, window: 30 },
     batchData:         { limit: 10, window: 10 },
     getData:           { limit: 15, window: 10 },
     admin_createGiftCode: { limit: 5, window: 60 },
@@ -417,10 +418,7 @@ app.get("/ping", (req, res) => res.status(200).send("OK"));
 // API: Login
 app.post("/api/login", async (req, res) => {
 
-    const ip =
-        req.headers["x-forwarded-for"]?.split(",")[0]?.trim()
-        || req.ip
-        || "unknown";
+    const ip = req.ip;
 
     const rate = await checkIpRateLimit(
         ip,
@@ -434,6 +432,8 @@ app.post("/api/login", async (req, res) => {
             retry_after: rate.retryAfter
         });
     }
+
+    //
 
     const { initData } = req.body;
 
@@ -721,17 +721,59 @@ const TELEGRAM_TASK_CHATS = {
 };
 
 
-app.post("/api/claimTelegramTask", async (req, res) => {
-    const { token, taskId } = req.body;
+// API: Check Telegram Task
+app.post("/api/checkTelegramTask", async (req, res) => {
+    const { initData, taskId } = req.body;
 
-    if (!token) {
-        return res.status(401).json({
+    // ==========================================
+    // VALIDATE TASK
+    // ==========================================
+    const normalizedTaskId = Number(taskId);
+
+    if (![1, 2].includes(normalizedTaskId)) {
+        return res.status(400).json({
             ok: false,
-            error: "MISSING_TOKEN"
+            error: "INVALID_TASK"
         });
     }
 
-    if (![1, 2].includes(Number(taskId))) {
+    // ==========================================
+    // VERIFY TELEGRAM INIT DATA
+    // ==========================================
+    const user = verifyTelegramInitData(
+        initData,
+        process.env.BOT_TOKEN
+    );
+
+    if (!user) {
+        return res.status(401).json({
+            error: "Invalid initData"
+        });
+    }
+
+    // ==========================================
+    // RATE LIMIT
+    // ==========================================
+    const rate = await checkTelegramRateLimit(
+        user.id,
+        "telegramTaskCheck"
+    );
+
+    if (!rate.allowed) {
+        return res.status(429).json({
+            ok: false,
+            error: "RATE_LIMITED",
+            retry_after: rate.retryAfter
+        });
+    }
+
+    // ==========================================
+    // SERVER-SIDE CHAT ID
+    // ==========================================
+    const chatId =
+        TELEGRAM_TASK_CHATS[normalizedTaskId];
+
+    if (!chatId) {
         return res.status(400).json({
             ok: false,
             error: "INVALID_TASK"
@@ -739,94 +781,47 @@ app.post("/api/claimTelegramTask", async (req, res) => {
     }
 
     try {
-        const payload = jwt.verify(
-            token,
-            process.env.JWT_SECRET
-        );
-
-        const telegramId = Number(payload.telegram_id);
-        const rate = await checkTelegramRateLimit(
-             telegramId,
-             "telegramTask"
-        );
-
-        if (!rate.allowed) {
-           return res.status(429).json({
-               ok: false,
-               error: "RATE_LIMITED",
-               retry_after: rate.retryAfter
-           });
-        }
-        const chatId = TELEGRAM_TASK_CHATS[Number(taskId)];
 
         const url =
             `https://api.telegram.org/bot${process.env.BOT_TOKEN}` +
-            `/getChatMember?chat_id=${encodeURIComponent(chatId)}` +
-            `&user_id=${telegramId}`;
+            `/getChatMember` +
+            `?chat_id=${encodeURIComponent(chatId)}` +
+            `&user_id=${encodeURIComponent(user.id)}`;
 
         const response = await fetch(url);
         const result = await response.json();
 
         if (!result.ok) {
-            return res.status(400).json({
-                ok: false,
-                error: "TELEGRAM_CHECK_FAILED"
+            return res.json({
+                ok: true,
+                joined: false
             });
         }
 
-        const status = result.result?.status;
+        const status =
+            result.result?.status;
 
         const joined =
             status === "member" ||
             status === "administrator" ||
             status === "creator";
 
-        if (!joined) {
-            return res.status(403).json({
-                ok: false,
-                error: "NOT_JOINED"
-            });
-        }
-
-        const { data, error } = await supabase.rpc(
-            "rpc_claim_telegram_task",
-            {
-                p_telegram_id: telegramId,
-                p_task_id: Number(taskId)
-            }
-        );
-
-        if (error) {
-            console.error("[claimTelegramTask]", error);
-
-            return res.status(500).json({
-                ok: false,
-                error: "CLAIM_FAILED"
-            });
-        }
-
         return res.json({
             ok: true,
-            data
+            joined,
+            status
         });
 
     } catch (err) {
 
-        if (
-            err.name === "JsonWebTokenError" ||
-            err.name === "TokenExpiredError"
-        ) {
-            return res.status(401).json({
-                ok: false,
-                error: "INVALID_TOKEN"
-            });
-        }
-
-        console.error("[claimTelegramTask]", err);
+        console.error(
+            "[checkTelegramTask]",
+            err
+        );
 
         return res.status(500).json({
             ok: false,
-            error: "SERVER_ERROR"
+            error: "TELEGRAM_CHECK_FAILED"
         });
     }
 });

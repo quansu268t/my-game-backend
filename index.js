@@ -142,6 +142,7 @@ const RATE_LIMITS = {
 
     // Daily / tasks
     dailyCheckin:     { limit: 2, window: 20 },
+    missionPage:      { limit: 10, window: 10 },
 
     // Economy
     exchangePoints:   { limit: 3, window: 30 },
@@ -170,14 +171,7 @@ const RATE_LIMITS = {
 };
 
 
-const missingRateLimits = Object.keys(USER_RPC_MAP)
-    .filter(action => !RATE_LIMITS[action]);
 
-if (missingRateLimits.length > 0) {
-    throw new Error(
-        `[SECURITY] Missing rate limits: ${missingRateLimits.join(", ")}`
-    );
-}
 // Trả về:
 // {
 //   allowed: true/false,
@@ -310,6 +304,16 @@ const BATCH_RPC_ALLOWLIST = new Set([
     "rpc_get_topbar",
     "rpc_get_active_pet",
 ]);
+
+
+const missingRateLimits = Object.keys(USER_RPC_MAP)
+    .filter(action => !RATE_LIMITS[action]);
+
+if (missingRateLimits.length > 0) {
+    throw new Error(
+        `[SECURITY] Missing rate limits: ${missingRateLimits.join(", ")}`
+    );
+}
 // ==========================================
 // 5. ĐỊNH TUYẾN CÁC API (ROUTES)
 // ==========================================

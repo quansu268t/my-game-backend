@@ -157,11 +157,11 @@ const RATE_LIMITS = {
 
     // High-risk
     redeemGiftCode:   { limit: 1, window: 120 },
-    withdrawCreate:   { limit: 1, window: 86400 },
+    withdrawCreate:   { limit: 2, window: 86400 },
     claimReferralReward: { limit: 3, window: 60 },
 
     // Sunmoon
-    sunMoonJoin:       { limit: 3, window: 9 },
+    sunMoonJoin:       { limit: 4, window: 10 },
     sunMoonSelectCell: { limit: 5, window: 10 },
     sunMoonLeaveQueue: { limit: 3, window: 10 },
     sunMoonResult:     { limit: 5, window: 10 },

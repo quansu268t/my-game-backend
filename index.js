@@ -367,6 +367,11 @@ const RPC_CONFIG = {
     "rpc_get_coin_leaderboard": { ttl: 1800, isUserSpecific: false }, "rpc_get_referral_leaderboard": { ttl: 1800, isUserSpecific: false },
     "rpc_get_leaderboard_season": { ttl: 3600, isUserSpecific: false }
 };
+if (action === 'memoryStart') {
+    return res.status(403).json({
+        error: 'MEMORY_GAME_DISABLED'
+    });
+}
 // ==========================================
 // BATCH RPC ALLOWLIST
 // CHỈ READ-ONLY RPC ĐƯỢC PHÉP ĐI QUA BATCH

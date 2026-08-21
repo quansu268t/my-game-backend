@@ -179,11 +179,11 @@ const RATE_LIMITS = {
     telegramTaskCheck: { limit: 5, window: 30 },
     batchData:         { limit: 10, window: 10 },
     getData:           { limit: 15, window: 10 },
-    admin_createGiftCode: { limit: 5, window: 60 },
-    admin_rejectWithdraw: { limit: 20, window: 60 },
-    admin_approveWithdraw: { limit: 20, window: 60 },
-    admin_getWithdraws: { limit: 20, window: 10 },
-    admin_toggleMaintenance: { limit: 3, window: 60 }
+    admin_createGiftCode: { limit: 2, window: 120 },
+    admin_rejectWithdraw: { limit: 3, window: 120 },
+    admin_approveWithdraw: { limit: 3, window: 120 },
+    admin_getWithdraws: { limit: 10, window: 10 },
+    admin_toggleMaintenance: { limit: 2, window: 120 }
 };
 
 

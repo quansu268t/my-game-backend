@@ -142,9 +142,18 @@ const RATE_LIMITS = {
     // Memory card mini game
     memoryGetActive:  { limit: 10, window: 10 },
     memoryStart:      { limit: 2, window: 40 },
-    memoryFlipPair:   { limit: 40, window: 60 },
+    memoryFlipPair:   { limit: 60, window: 50 },
     memoryBuyLife:    { limit: 10, window: 60 },
     memoryFinish:     { limit: 3, window: 60 },
+
+    //cobamau
+    cobaJoinQueue:   { limit: 5,  window: 20 },
+    cobaCancelQueue: { limit: 3,  window: 10 },
+    cobaGetMyState:  { limit: 10, window: 10 },
+    cobaGetState:    { limit: 20, window: 20 },
+    cobaPlayMove:    { limit: 8,  window: 20 },
+    cobaForfeit:     { limit: 3,  window: 60 },
+    
 
     // Pet / resources
     feedPet:          { limit: 3, window: 15 },
@@ -210,6 +219,13 @@ const RATE_LIMIT_FAIL_CLOSED = new Set([
     "memoryFlipPair",
     "memoryBuyLife",
     "memoryFinish",
+
+
+    //cobamau
+    "cobaJoinQueue",
+    "cobaCancelQueue",
+    "cobaPlayMove",
+    "cobaForfeit",
 
     // SunMoon state-changing
     "sunMoonJoin",
@@ -349,7 +365,13 @@ const USER_RPC_MAP = {
     memoryStart: "rpc_memory_start",
     memoryFlipPair: "rpc_memory_flip_pair",
     memoryBuyLife: "rpc_memory_buy_life",
-    memoryFinish: "rpc_memory_finish"
+    memoryFinish: "rpc_memory_finish",
+    cobaJoinQueue:   "rpc_coba3_join_queue",
+    cobaCancelQueue: "rpc_coba3_cancel_queue",
+    cobaGetMyState:  "rpc_coba3_get_my_state",
+    cobaGetState:    "rpc_coba3_get_state",
+    cobaPlayMove:    "rpc_coba3_play_move",
+    cobaForfeit:     "rpc_coba3_forfeit"
 };
 
 const ADMIN_RPC_MAP = {
